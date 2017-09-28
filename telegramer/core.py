@@ -53,7 +53,7 @@ from deluge.log import LOG as log
 #############################
 
 def prelog():
-    return strftime('%Y-%m-%d %H:%M:%S # Telegramer: ')
+    return strftime('%Y-%m-%d %H:%M:%S # Telegramer 1.1.3-1: ')
 
 try:
     import re
@@ -152,6 +152,7 @@ class Core(CorePluginBase):
         self.core = component.get('Core')
         self.bot = None
         self.updater = None
+        self.opts = None
         log.debug(prelog() + 'Initialize class')
         super(Core, self).__init__(*args)
 
@@ -218,10 +219,13 @@ class Core(CorePluginBase):
                 for key, value in self.COMMANDS.iteritems():
                     dp.add_handler(CommandHandler(key, value))
 
+                dp.add_handler(MessageHandler(Filters.text, self.auto_add_magnet))
+                dp.add_handler(MessageHandler(Filters.document, self.auto_add_file))
+
                 # Log all errors
                 dp.add_error_handler(self.error)
                 # Start the Bot
-                self.updater.start_polling(poll_interval=0.05)
+                self.updater.start_polling(poll_interval=3.0, bootstrap_retries=-1)
 
         except Exception as e:
             log.error(prelog() + str(e) + '\n' + traceback.format_exc())
@@ -229,6 +233,9 @@ class Core(CorePluginBase):
 
     def error(self, bot, update, error):
         logger.warn('Update "%s" caused error "%s"' % (update, error))
+        logger.warn('Trying to reboot')
+        self.disable()
+        self.enable()
 
 
     def disable(self):
@@ -480,6 +487,72 @@ class Core(CorePluginBase):
                     log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
                 return ConversationHandler.END
+
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+
+    def auto_add_magnet(self, bot, update):
+        if str(update.message.chat.id) in self.whitelist:
+            try:
+                user = update.message.chat.id
+                log.debug("auto_add_magnet of %s: %s" % (str(user), update.message.text))
+
+                try:
+                    #options = None
+                    #metainfo = update.message.text
+                    """Adds a torrent with the given options.
+                    metainfo could either be base64 torrent data or a magnet link.
+                    Available options are listed in deluge.core.torrent.TorrentOptions.
+                    """
+                    if self and not self.opts:
+                        self.opts = {}
+                    for metainfo in update.message.text.splitlines():
+                        if is_magnet(metainfo):
+                            update.message.reply_text('Magnet received',
+                                reply_markup=ReplyKeyboardRemove())
+                            log.debug(prelog() + 'Adding torrent from magnet URI `%s` using options `%s` ...', metainfo, self.opts)
+                            tid = self.core.add_torrent_magnet(metainfo, self.opts)
+                            self.apply_label(tid)
+                        else:
+                            update.message.reply_text(STRINGS['not_magnet'],
+                                reply_markup=ReplyKeyboardRemove())
+
+                except Exception as e:
+                    log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                
+    def auto_add_file(self, bot, update):
+        if str(update.message.chat.id) in self.whitelist:
+            try:
+                user = update.message.chat.id
+                log.debug("auto_add_file of %s: %s" % (str(user), update.message.text))
+
+                # If it's a file
+                if update.message.document and update.message.document.mime_type == 'application/x-bittorrent':
+                    # Get file info
+                    file_info = self.bot.getFile(update.message.document.file_id)
+                    # Download file
+                    request = urllib2.Request(file_info.file_path, headers=HEADERS)
+                    status_code = urllib2.urlopen(request).getcode()
+                    if status_code == 200:
+                        update.message.reply_text('Torrent file received',
+                            reply_markup=ReplyKeyboardRemove())
+                        file_contents = urllib2.urlopen(request).read()
+                        # Base64 encode file data
+                        metainfo = b64encode(file_contents)
+                        if self.opts is None:
+                            self.opts = {}
+                        log.info(prelog() + 'Adding torrent from base64 string using options `%s` ...', self.opts)
+                        tid = self.core.add_torrent_file(None, metainfo, self.opts)
+                        self.apply_label(tid)
+                    else:
+                        update.message.reply_text(STRINGS['download_fail'],
+                            reply_markup=ReplyKeyboardRemove())
+                else:
+                    update.message.reply_text(STRINGS['not_file'],
+                        reply_markup=ReplyKeyboardRemove())
 
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())

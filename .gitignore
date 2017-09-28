@@ -1,0 +1,6 @@
+Telegramer.egg-info/
+Telegramer.egg-info/*
+build/
+build/*
+dist/
+dist/*

@@ -1,5 +1,15 @@
 # <p align="center">Telegramer
 
+## Changelog
+
+* 1.1.3_alex 
+    * Raised time between updates to three seconds. Maybe this way we can avoid the 403 forbidden error that disconnects the bot
+    * Added new operational handlers. To add a magnet or a file, there is no need for a conversation with the bot. He automatically tries to process them.
+    * Added multiline handling operation to the magnet recogniser. There is no need to send the magnets one at a time.
+    * Added verbosity. The bot will answer as soon as he parses one of the new orders, independently from other options.
+
+## Original Readme
+
 [Telegramer](https://github.com/noam09/deluge-telegramer) is a Deluge plugin for sending notifications, adding and viewing torrents using [Telegram](https://telegram.org/) messenger. It features both a GTK and Web UI.
 
 The plugin runs a [Telegram bot](https://telegram.org/blog/bot-revolution) on the host machine which listens for commands the user sends, allowing you to list active torrents, download new torrents, and receive notifications when torrents are added to Deluge and when they finish downloading.
