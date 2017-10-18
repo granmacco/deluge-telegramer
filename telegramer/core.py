@@ -245,8 +245,8 @@ class Core(CorePluginBase):
 
 
     def error(self, bot, update, error):
-        logger.warn('Update "%s" caused error "%s"' % (update, error))
-        logger.warn('Trying to reboot')
+        log.warn('Update "%s" caused error "%s"' % (update, error))
+        log.warn('Trying to reboot')
         self.disable()
         self.enable()
 
