@@ -2,6 +2,9 @@
 
 ## Changelog
 
+* 1.1.6_alex
+    * Merge from 1.1.6 from noam09. This fixes the 403 forbidden error.
+
 * 1.1.3_alex 
     * Raised time between updates to three seconds. Maybe this way we can avoid the 403 forbidden error that disconnects the bot
     * Added new operational handlers. To add a magnet or a file, there is no need for a conversation with the bot. He automatically tries to process them.
