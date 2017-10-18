@@ -53,7 +53,7 @@ from deluge.log import LOG as log
 #############################
 
 def prelog():
-    return strftime('%Y-%m-%d %H:%M:%S # Telegramer 1.1.3-1: ')
+    return strftime('%Y-%m-%d %H:%M:%S # Telegramer 1.1.6-1: ')
 
 try:
     import re
@@ -125,7 +125,9 @@ STRINGS = {'no_label': 'No Label',
             'not_file': 'Aw man... That\'s not a torrent file',
             'not_url': 'Aw man... Bad link',
             'download_fail': 'Aw man... Download failed',
-            'no_items': 'No items'}
+            'no_items': 'No items',
+            'enabling': 'Warming up!',
+            'disabling': 'Shutting down...'}
 
 INFO_DICT = (('queue', lambda i,s: i!=-1 and str(i) or '#'),
              ('state', None),
@@ -238,6 +240,7 @@ class Core(CorePluginBase):
                 """
                 ###################################################################################
                 # Start the Bot
+                self.telegram_send(STRINGS['enabling'])
                 self.updater.start_polling(poll_interval=3.0, bootstrap_retries=-1)
 
         except Exception as e:
@@ -246,14 +249,20 @@ class Core(CorePluginBase):
 
     def error(self, bot, update, error):
         log.warn('Update "%s" caused error "%s"' % (update, error))
-        log.warn('Trying to reboot')
-        self.disable()
-        self.enable()
+        # Commented, because restarting isn't working at all...
+        '''log.warn('Trying to reboot')
+        try:
+            self.telegram_send('Error %s, rebooting!' % error)
+        except Exception as e:
+            log.error('Error warning about the reboot')
+        #self.restart_telegramer()
+        log.warn('Reboot order finished')'''
 
 
     def disable(self):
         try:
             log.info(prelog() + 'Disable')
+            self.telegram_send(STRINGS['disabling'])
             reactor.callLater(2, self.disconnect_events)
             self.whitelist = []
             self.telegram_poll_stop()
@@ -290,7 +299,7 @@ class Core(CorePluginBase):
                 if self.updater:
                     log.debug(prelog() + 'Start polling')
                     #self.bot.polling()
-                    self.updater.start_polling(poll_interval=0.05)
+                    self.updater.start_polling(poll_interval=1.00)
                     log.debug(prelog() +"Reached D")
                     #self.updater.idle()
                     while True: # and bot running HTTPSConnectionPool
