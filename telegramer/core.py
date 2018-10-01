@@ -122,6 +122,7 @@ STRINGS = {'no_label': 'No Label',
             'eta': 'ETA',
             'error': 'Error',
             'not_magnet': 'Aw man... That\'s not a magnet link',
+            'not_magnet_nor_file': 'Aw man... That\'s neither a magnet link nor a good link',
             'not_file': 'Aw man... That\'s not a torrent file',
             'not_url': 'Aw man... Bad link',
             'download_fail': 'Aw man... Download failed',
@@ -223,7 +224,7 @@ class Core(CorePluginBase):
                 for key, value in self.COMMANDS.iteritems():
                     dp.add_handler(CommandHandler(key, value))
 
-                dp.add_handler(MessageHandler(Filters.text, self.auto_add_magnet))
+                dp.add_handler(MessageHandler(Filters.text, self.auto_add_text))
                 dp.add_handler(MessageHandler(Filters.document, self.auto_add_file))
 
                 # Log all errors
@@ -537,6 +538,51 @@ class Core(CorePluginBase):
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
+    def auto_add_text(self, bot, update):
+        if str(update.message.chat.id) in self.whitelist:
+            try:
+                user = update.message.chat.id
+                log.debug("auto_add_text of %s: %s" % (str(user), update.message.text))
+                
+                try:
+                    if self and not self.opts:
+                        self.opts = {}
+                    for metainfo in update.message.text.splitlines():
+                        metainfo_stripped = metainfo.strip()
+                        log.debug(prelog() + 'Processing line %s', metainfo_stripped)
+                        if is_magnet(metainfo_stripped):
+                            update.message.reply_text('Magnet received',
+                                reply_markup=ReplyKeyboardRemove())
+                            log.debug(prelog() + 'Adding torrent from magnet URI `%s` using options `%s` ...', metainfo_stripped, self.opts)
+                            tid = self.core.add_torrent_magnet(metainfo_stripped, self.opts)
+                            self.apply_label(tid)
+                        elif is_url(metainfo_stripped):
+                            try:
+                                # Download file
+                                request = urllib2.Request(metainfo_stripped,
+                                    headers=HEADERS)
+                                status_code = urllib2.urlopen(request).getcode()
+                                if status_code == 200:
+                                    file_contents = urllib2.urlopen(request).read()
+                                    # Base64 encode file data
+                                    base64_file_data = b64encode(file_contents)
+                                    if self.opts is None:
+                                        self.opts = {}
+                                    log.info(prelog() + 'Adding torrent from base64 string using options `%s` ...', self.opts)
+                                    tid = self.core.add_torrent_file(None, base64_file_data, self.opts)
+                                    self.apply_label(tid)
+                                else:
+                                    update.message.reply_text(STRINGS['download_fail'],
+                                        reply_markup=ReplyKeyboardRemove())
+                            except Exception as e:
+                                update.message.reply_text(STRINGS['download_fail'],
+                                    reply_markup=ReplyKeyboardRemove())
+                                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                        else:
+                            update.message.reply_text(STRINGS['not_magnet_nor_url'],
+                                reply_markup=ReplyKeyboardRemove())
+                        
+                
     def auto_add_magnet(self, bot, update):
         if str(update.message.chat.id) in self.whitelist:
             try:
@@ -602,6 +648,38 @@ class Core(CorePluginBase):
 
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                
+    def auto_add_url(self, bot, update):
+        if str(update.message.chat.id) in self.whitelist:
+            try:
+                user = update.message.chat.id
+                log.debug("auto_add_url of %s: %s" % (str(user), update.message.text))
+
+                if is_url(update.message.text):
+                    try:
+                        # Download file
+                        request = urllib2.Request(update.message.text.strip(),
+                            headers=HEADERS)
+                        status_code = urllib2.urlopen(request).getcode()
+                        if status_code == 200:
+                            file_contents = urllib2.urlopen(request).read()
+                            # Base64 encode file data
+                            metainfo = b64encode(file_contents)
+                            if self.opts is None:
+                                self.opts = {}
+                            log.info(prelog() + 'Adding torrent from base64 string using options `%s` ...', self.opts)
+                            tid = self.core.add_torrent_file(None, metainfo, self.opts)
+                            self.apply_label(tid)
+                        else:
+                            update.message.reply_text(STRINGS['download_fail'],
+                                reply_markup=ReplyKeyboardRemove())
+                    except Exception as e:
+                        update.message.reply_text(STRINGS['download_fail'],
+                            reply_markup=ReplyKeyboardRemove())
+                        log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                        
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
 
     def add_torrent(self, bot, update):
@@ -636,7 +714,6 @@ class Core(CorePluginBase):
 
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
-
 
     def add_url(self, bot, update):
         if str(update.message.chat.id) in self.whitelist:
