@@ -78,6 +78,12 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             autoWidth: true,
             value: 'IDs should be comma-separated'
         }));
+        this.opts.bind('telegram_users_notify', fieldset.add({
+            fieldLabel: _('Notify IDs'),
+            anchor:'100%',
+            name: 'telegram_users_notify',
+            autoWidth: true,
+            value: 'IDs should be comma-separated'
         this.opts.bind('wol_address', fieldset.add({
             fieldLabel: _('Wake on lan address'),
             anchor:'100%',
@@ -213,6 +219,9 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             }
             if (!Ext.isEmpty(config['telegram_users'])) {
                 config['telegram_users'] = config['telegram_users'];
+            }
+            if (!Ext.isEmpty(config['telegram_users_notify'])) {
+                config['telegram_users_notify'] = config['telegram_users_notify'];
             }
             if (!Ext.isEmpty(config['wol_address'])) {
                 config['wol_address'] = config['wol_address'];
