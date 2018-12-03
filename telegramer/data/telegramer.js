@@ -84,6 +84,7 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             name: 'telegram_users_notify',
             autoWidth: true,
             value: 'IDs should be comma-separated'
+        }));
         this.opts.bind('wol_address', fieldset.add({
             fieldLabel: _('Wake on lan address'),
             anchor:'100%',
