@@ -78,6 +78,20 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             autoWidth: true,
             value: 'IDs should be comma-separated'
         }));
+        this.opts.bind('wol_address', fieldset.add({
+            fieldLabel: _('Wake on lan address'),
+            anchor:'100%',
+            name: 'wol_address',
+            autoWidth: true,
+            value: '00:00:00:00:00:00'
+        }));
+        this.opts.bind('wol_interface', fieldset.add({
+            fieldLabel: _('Wake on lan interface'),
+            anchor:'100%',
+            name: 'wol_interface',
+            autoWidth: true,
+            value: 'eth0'
+        }));
         fieldset = this.add({
             xtype: 'fieldset',
             title: _('Notifications'),
@@ -200,6 +214,12 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             if (!Ext.isEmpty(config['telegram_users'])) {
                 config['telegram_users'] = config['telegram_users'];
             }
+            if (!Ext.isEmpty(config['wol_address'])) {
+                config['wol_address'] = config['wol_address'];
+            }
+            if (!Ext.isEmpty(config['wol_interface'])) {
+                config['wol_interface'] = config['wol_interface'];
+            }
             if (!Ext.isEmpty(config['telegram_notify_added'])) {
                 config['telegram_notify_added'] = config['telegram_notify_added'];
             }
@@ -241,6 +261,12 @@ TelegramerPanel = Ext.extend(Ext.form.FormPanel, {
             }
             if (!Ext.isEmpty(changed['telegram_users'])) {
             changed['telegram_users'] = changed['telegram_users'];
+            }
+            if (!Ext.isEmpty(changed['wol_address'])) {
+            changed['wol_address'] = changed['wol_address'];
+            }
+            if (!Ext.isEmpty(changed['wol_interface'])) {
+            changed['wol_interface'] = changed['wol_interface'];
             }
             if (!Ext.isEmpty(changed['telegram_notify_added'])) {
             changed['telegram_notify_added'] = changed['telegram_notify_added'];

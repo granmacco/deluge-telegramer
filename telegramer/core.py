@@ -47,13 +47,17 @@ import logging
 import traceback
 from time import strftime
 from deluge.log import LOG as log
+import subprocess
+from subprocess import call
 
 #############################
 # log.setLevel(logging.DEBUG)
 #############################
 
+VERSION = '1.1.7'
+
 def prelog():
-    return strftime('%Y-%m-%d %H:%M:%S # Telegramer 1.1.6-1: ')
+    return strftime('%Y-%m-%d %H:%M:%S # Telegramer ' + VERSION +': ')
 
 try:
     import re
@@ -85,6 +89,8 @@ DEFAULT_PREFS = {"telegram_token": "Contact @BotFather and create a new bot",
                 "telegram_users": "Contact @MyIDbot",
                 "telegram_notify_finished": True,
                 "telegram_notify_added": True,
+                "wol_address": "00:00:00:00:00:00",
+                "wol_interface": "eth0",
                 "dir1": "",
                 "cat1": "",
                 "dir2": "",
@@ -118,6 +124,8 @@ STRINGS = {'no_label': 'No Label',
             'send_magnet': 'Please send me the magnet link',
             'send_file': 'Please send me the torrent file',
             'send_url': 'Please send me the address',
+            'wol_success': 'Magic packet sent',
+            'wol_error': 'Error sending magic packet',
             'added': 'Added',
             'eta': 'ETA',
             'error': 'Error',
@@ -183,6 +191,7 @@ class Core(CorePluginBase):
                             'help'         : self.cmd_help,
                             'start'        : self.cmd_help,
                             'reload'       : self.restart_telegramer,
+                            'wol'          : self.cmd_wol,
                             'commands'     : self.cmd_help}
 
             log.debug(prelog() + 'Initialize bot')
@@ -342,9 +351,32 @@ class Core(CorePluginBase):
                     '/up - List uploading torrents',
                     '/paused - List paused torrents',
                     '/cancel - Cancels the current operation',
+                    '/wol - wakeonlan',
                     '/help - Show this help message']
             self.telegram_send('\n'.join(help_msg), to=update.message.chat.id, parse_mode='Markdown')
 
+    def cmd_wol(self, bot, update):
+        if str(update.message.chat.id) in self.whitelist:
+            try:
+                command = []
+                command.append('sudo')
+                command.append('synonet')
+                command.append('--wake')
+                command.append(self.config['wol_address'])
+                command.append(self.config['wol_interface'])
+                self.run(command)
+                update.message.reply_text(STRINGS['wol_success'],
+                            reply_markup=ReplyKeyboardRemove())
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                update.message.reply_text(STRINGS['wol_error'],
+                            reply_markup=ReplyKeyboardRemove())
+
+    def run(self, command):
+        if not type(command) == list:
+            raise TypeError(sys._getframe().f_code.co_name + ' must be called with an %r' % 'list of str')
+        result = call(command, stdout=subprocess.PIPE, shell=False)
+        return result
 
     def cmd_list(self, bot, update):
         if str(update.message.chat.id) in self.whitelist:
@@ -581,7 +613,10 @@ class Core(CorePluginBase):
                         else:
                             update.message.reply_text(STRINGS['not_magnet_nor_url'],
                                 reply_markup=ReplyKeyboardRemove())
-                        
+                except Exception as e:
+                    log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
                 
     def auto_add_magnet(self, bot, update):
         if str(update.message.chat.id) in self.whitelist:
