@@ -83,6 +83,9 @@ class Gtk3UI(Gtk3PluginBase):
             "telegram_user": self.builder.get_object("telegram_user").get_text(),
             "telegram_users": self.builder.get_object("telegram_users").get_text(),
             "telegram_users_notify": self.builder.get_object("telegram_users_notify").get_text(),
+            # Wake On Lan
+            "wol_address":self.builder.get_object("wol_address").get_text(),
+            "wol_interface":self.builder.get_object("wol_interface").get_text(),
             "minimum_speed": self.builder.get_object("minimum_speed").get_text(),
             "user_timer": self.builder.get_object("user_timer").get_text(),
             "proxy_url": self.builder.get_object("proxy_url").get_text(),
@@ -122,6 +125,9 @@ class Gtk3UI(Gtk3PluginBase):
         self.builder.get_object("telegram_user").set_text(config["telegram_user"])
         self.builder.get_object("telegram_users").set_text(config["telegram_users"])
         self.builder.get_object("telegram_users_notify").set_text(config["telegram_users_notify"])
+        # Wake On Lan
+        self.builder.get_object("wol_address").set_text(config["wol_address"])
+        self.builder.get_object("wol_interface").set_text(config["wol_interface"])
         # Slow
         self.builder.get_object("minimum_speed").set_text(str(config["minimum_speed"]))
         self.builder.get_object("user_timer").set_text(str(config["user_timer"]))

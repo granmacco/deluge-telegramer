@@ -50,6 +50,12 @@ from time import strftime
 import time
 # from deluge.log import LOG as log
 import logging
+import subprocess
+import sys
+from subprocess import call
+import re
+import urllib
+from urllib.request import urlopen
 log = logging.getLogger(__name__)
 
 # import sys
@@ -60,10 +66,10 @@ log = logging.getLogger(__name__)
 # log.setLevel(logging.DEBUG)
 #############################
 
+__version__ = "2.1.1.4.granmacco.1"
 
 def prelog():
-    return strftime('%Y-%m-%d %H:%M:%S # Telegramer: ')
-
+    return strftime('%Y-%m-%d %H:%M:%S # Telegramer ' + __version__ +': ')
 
 try:
     import re
@@ -103,6 +109,8 @@ DEFAULT_PREFS = {"telegram_token":                "Contact @BotFather and create
                  "telegram_users_notify":         "Contact @MyIDbot",
                  "telegram_notify_finished":      True,
                  "telegram_notify_added":         True,
+                 "wol_address":                   "00:00:00:00:00:00",
+                 "wol_interface":                 "eth0",
                  "proxy_url":                     "",
                  'urllib3_proxy_kwargs_username': "",
                  "urllib3_proxy_kwargs_password": "",
@@ -146,16 +154,22 @@ STRINGS = {'no_label': 'No Label',
            'send_file': 'Please send me the torrent file',
            'send_url': 'Please send me the address',
            'added_rss': 'Successfully added RSS subscription!',
+           'wol_success': 'Magic packet sent',
+           'wol_error': 'Error sending magic packet',
            'eta': 'ETA',
            'error': 'Error',
            'not_magnet': 'Aw man... That\'s not a magnet link',
            'no_magnet_found': 'Magnet not found in message',
+           'not_magnet_nor_file': 'Aw man... That\'s neither a magnet link nor a good link',
            'not_file': 'Aw man... That\'s not a torrent file',
            'not_url': 'Aw man... Bad link',
            'download_fail': 'Aw man... Download failed',
            'no_items': 'No items',
            'torrent': 'Torrent',
            'rss': 'RSS',
+           'enabling': 'Warming up!',
+           'disabling': 'Shutting down...',
+           'error_enabling': 'There is no connection!',
            'which_rss_feed': 'Which RSS feed?',
            'which_regex': 'Which RSS regex template to use?',
            'no_rss_found': 'No RSS feeds configured in YaRSS2 plugin',
@@ -216,6 +230,7 @@ class Core(CorePluginBase):
         self.opts = {}
         self.bot = None
         self.updater = None
+        self.opts = None
         self.is_rss = False
         self.yarss_data = YarssData()
         self.yarss_config = None
@@ -249,6 +264,7 @@ class Core(CorePluginBase):
                              'start':       self.cmd_help,
                              'reload':      self.restart_telegramer,
                              # 'rss':         self.cmd_add_rss,
+                             'wol'          : self.cmd_wol,
                              'commands':    self.cmd_help}
 
             self.torrent_manager = component.get("TorrentManager")
@@ -343,6 +359,9 @@ class Core(CorePluginBase):
                 for key, value in self.COMMANDS.items():
                     dp.add_handler(CommandHandler(key, value))
 
+                dp.add_handler(MessageHandler(Filters.text, self.auto_add_text))
+                dp.add_handler(MessageHandler(Filters.document, self.auto_add_torrent))
+
                 # Log all errors
                 dp.add_error_handler(self.error)
                 #######################################################################
@@ -357,19 +376,37 @@ class Core(CorePluginBase):
                 """
                 #######################################################################
                 # Start the Bot
-                self.updater.start_polling(poll_interval=0.05)
-                # self.updater.idle() # blocks
+                connected = False
+                while not connected:
+                    try:
+                        self.telegram_send(STRINGS['enabling'])
+                        self.updater.start_polling(poll_interval=3.0, bootstrap_retries=-1)
+                        connected = True
+                        # self.updater.idle() # blocks
+                    except NetworkError as e:
+                        self.telegram_send(STRINGS['error_enabling'])
+                        log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                        
         except Exception as e:
             log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def error(self, update: Update, context: CallbackContext):
         log.warn('Update "%s" caused error "%s"' % (update, context.error))
+        # Commented, because restarting isn't working at all...
+        '''log.warn('Trying to reboot')
+        try:
+            self.telegram_send('Error %s, rebooting!' % error)
+        except Exception as e:
+            log.error('Error warning about the reboot')
+        #self.restart_telegramer()
+        log.warn('Reboot order finished')'''
 
     def disable(self):
         try:
             if self.check_speed_timer:
                 self.check_speed_timer.stop()
             log.info(prelog() + 'Disable')
+            self.telegram_send(STRINGS['disabling'])
             reactor.callLater(2, self.disconnect_events)
             self.whitelist = []
             self.telegram_poll_stop()
@@ -427,7 +464,7 @@ class Core(CorePluginBase):
                 if self.updater:
                     log.debug(prelog() + 'Start polling')
                     # self.bot.polling()
-                    self.updater.start_polling(poll_interval=0.05)
+                    self.updater.start_polling(poll_interval=1.00)
                     # self.updater.idle()
                     while True:     # and bot running HTTPSConnectionPool
                         sleep(10)
@@ -450,9 +487,10 @@ class Core(CorePluginBase):
             log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def cancel(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
-            log.info("User %s canceled the conversation."
-                     % str(update.message.chat.id))
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "User %s canceled the conversation."
+                     % user)
             update.message.reply_text('Operation cancelled',
                                       reply_markup=ReplyKeyboardRemove())
             self.is_rss = False
@@ -461,9 +499,9 @@ class Core(CorePluginBase):
             return ConversationHandler.END
 
     def cmd_help(self, update: Update, context: CallbackContext):
-        log.debug(prelog() + "Entered cmd_help")
-        if str(update.message.chat.id) in self.whitelist:
-            log.debug(prelog() + str(update.message.chat.id) + " in whitelist")
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.debug(prelog() + user + " in whitelist")
             help_msg = ['/add - Add a new torrent',
                         '/addpaused - Add a new torrent paused',
                         '/rss - Add a new RSS filter',
@@ -472,16 +510,43 @@ class Core(CorePluginBase):
                         '/up - List uploading torrents',
                         '/paused - List paused torrents',
                         '/cancel - Cancels the current operation',
+                        '/wol - wakeonlan',
                         '/help - Show this help message']
             log.debug(prelog() + "telegram_send to " +
-                      str([update.message.chat.id]))
+                      user)
             self.telegram_send('\n'.join(help_msg),
                                to=[update.message.chat.id],
                                parse_mode='Markdown')
+                               
+    def cmd_wol(self, bot, update):
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_wol received from %s" % user)
+            try:
+                command = []
+                command.append('sudo')
+                command.append('synonet')
+                command.append('--wake')
+                command.append(self.config['wol_address'])
+                command.append(self.config['wol_interface'])
+                self.run(command)
+                update.message.reply_text(STRINGS['wol_success'],
+                            reply_markup=ReplyKeyboardRemove())
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                update.message.reply_text(STRINGS['wol_error'],
+                            reply_markup=ReplyKeyboardRemove())
+
+    def run(self, command):
+        if not type(command) == list:
+            raise TypeError(sys._getframe().f_code.co_name + ' must be called with an %r' % 'list of str')
+        result = call(command, stdout=subprocess.PIPE, shell=False)
+        return result
 
     def cmd_list(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
-            # log.error(self.list_torrents())
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_list received from %s" % user)
             self.telegram_send(self.list_torrents(lambda t:
                                t.get_status(('state',))['state'] in
                                ('Active', 'Downloading', 'Seeding',
@@ -490,21 +555,27 @@ class Core(CorePluginBase):
                                parse_mode='Markdown')
 
     def cmd_down(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_down received from %s" % user)
             self.telegram_send(self.list_torrents(lambda t:
                                t.get_status(('state',))['state'] == 'Downloading'),
                                to=[update.message.chat.id],
                                parse_mode='Markdown')
 
     def cmd_up(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_up received from %s" % user)
             self.telegram_send(self.list_torrents(lambda t:
                                t.get_status(('state',))['state'] == 'Seeding'),
                                to=[update.message.chat.id],
                                parse_mode='Markdown')
 
     def cmd_paused(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_paused received from %s" % user)
             self.telegram_send(self.list_torrents(lambda t:
                                t.get_status(('state',))['state'] in
                                ('Paused', 'Queued')),
@@ -512,7 +583,9 @@ class Core(CorePluginBase):
                                parse_mode='Markdown')
 
     def add(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "add received from %s" % user)
             self.opts = {}
             self.is_rss = False
             self.magnet_only = False
@@ -525,8 +598,9 @@ class Core(CorePluginBase):
             """
 
     def add_paused(self, update: Update, context: CallbackContext):
-        # log.error(type(update.message.chat.id) + str(update.message.chat.id))
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "add_paused received from %s" % user)
             self.opts = {}
             self.opts["addpaused"] = True
             self.is_rss = False
@@ -534,8 +608,9 @@ class Core(CorePluginBase):
             return self.prepare_categories(update, context)
 
     def cmd_add_rss(self, update: Update, context: CallbackContext):
-        # log.error(type(update.message.chat.id) + str(update.message.chat.id))
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "cmd_add_rss received from %s" % user)
             if "YaRSS2" in component.get('Core').get_available_plugins():
                 return self.add_rss(update, context)
             else:
@@ -560,7 +635,8 @@ class Core(CorePluginBase):
 
     def torrent_or_rss(self, update: Update, context: CallbackContext):
         try:
-            if str(update.message.chat.id) not in self.whitelist:
+            user = str(update.message.chat.id)
+            if user not in self.whitelist:
                 return
 
             if STRINGS['torrent'] == update.message.text:
@@ -594,7 +670,9 @@ class Core(CorePluginBase):
             log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def prepare_torrent_type(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "prepare_torrent_type received from %s" % user)
             try:
                 # Request torrent type
                 keyboard_options = []
@@ -611,7 +689,9 @@ class Core(CorePluginBase):
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def category(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "category received from %s" % user)
             try:
                 if STRINGS['no_category'] == update.message.text:
                     self.opts = self.opts
@@ -717,73 +797,79 @@ class Core(CorePluginBase):
         return ConversationHandler.END
 
     def rss_feed(self, update: Update, context: CallbackContext):
-        if not str(update.message.chat.id) in self.whitelist:
-            return
-        self.is_rss = True
-        try:
-            rss_feed = next(rss_feed for rss_feed in list(self.yarss_config["rssfeeds"].values())
-                            if rss_feed["name"] == update.message.text)
-
-            self.yarss_data.subscription_data["rssfeed_key"] = rss_feed["key"]
-            log.debug(prelog() + 'User chose rss_feed "' + rss_feed["name"] + '"')
-
-            log.debug(self.config["regex_exp"])
-
-            keyboard_options = [[regex_name] for regex_name in list(self.config["regex_exp"].keys()) if regex_name != '']
-
-            if len(keyboard_options) > 0:
-                update.message.reply_text(
-                    '%s\n%s' % (STRINGS['which_regex'], STRINGS['cancel']),
-                    reply_markup=ReplyKeyboardMarkup(keyboard_options, one_time_keyboard=True))
-                return REGEX
-            else:
-                update.message.reply_text(
-                    '%s\n%s' % (STRINGS['no_regex'], STRINGS['cancel']),
-                    reply_markup=ReplyKeyboardRemove())
-                return ConversationHandler.END
-        except Exception as e:
-            log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "rss_feed received from %s" % user)
+            self.is_rss = True
+            try:
+                rss_feed = next(rss_feed for rss_feed in list(self.yarss_config["rssfeeds"].values())
+                                if rss_feed["name"] == update.message.text)
+    
+                self.yarss_data.subscription_data["rssfeed_key"] = rss_feed["key"]
+                log.debug(prelog() + 'User chose rss_feed "' + rss_feed["name"] + '"')
+    
+                log.debug(self.config["regex_exp"])
+    
+                keyboard_options = [[regex_name] for regex_name in list(self.config["regex_exp"].keys()) if regex_name != '']
+    
+                if len(keyboard_options) > 0:
+                    update.message.reply_text(
+                        '%s\n%s' % (STRINGS['which_regex'], STRINGS['cancel']),
+                        reply_markup=ReplyKeyboardMarkup(keyboard_options, one_time_keyboard=True))
+                    return REGEX
+                else:
+                    update.message.reply_text(
+                        '%s\n%s' % (STRINGS['no_regex'], STRINGS['cancel']),
+                        reply_markup=ReplyKeyboardRemove())
+                    return ConversationHandler.END
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+        return
 
     def regex(self, update: Update, context: CallbackContext):
-        if not str(update.message.chat.id) in self.whitelist:
-            return
-        if REGEX_SUBS_WORD in self.config["regex_exp"][update.message.text]:
-            self.yarss_data.subscription_data["regex_include"] = self.config["regex_exp"][update.message.text]
-
-            log.debug(prelog() + 'User chose regex ' + update.message.text)
-            update.message.reply_text(
-                '%s\n%s' % (STRINGS['file_name'], STRINGS['cancel']),
-                reply_markup=ReplyKeyboardRemove())
-            return FILE_NAME
-        else:
-            keyboard_options = [[regex_name] for regex_name in list(self.config["regex_exp"].keys())]
-            update.message.reply_text(
-                '%s\n%s' % (STRINGS['no_name'], STRINGS['cancel']),
-                reply_markup=ReplyKeyboardMarkup(keyboard_options, one_time_keyboard=True))
-            return REGEX
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "regex received from %s" % user)
+            if REGEX_SUBS_WORD in self.config["regex_exp"][update.message.text]:
+                self.yarss_data.subscription_data["regex_include"] = self.config["regex_exp"][update.message.text]
+    
+                log.debug(prelog() + 'User chose regex ' + update.message.text)
+                update.message.reply_text(
+                    '%s\n%s' % (STRINGS['file_name'], STRINGS['cancel']),
+                    reply_markup=ReplyKeyboardRemove())
+                return FILE_NAME
+            else:
+                keyboard_options = [[regex_name] for regex_name in list(self.config["regex_exp"].keys())]
+                update.message.reply_text(
+                    '%s\n%s' % (STRINGS['no_name'], STRINGS['cancel']),
+                    reply_markup=ReplyKeyboardMarkup(keyboard_options, one_time_keyboard=True))
+                return REGEX
+        return
 
     def rss_file_name(self, update: Update, context: CallbackContext):
-        if not str(update.message.chat.id) in self.whitelist:
-            return
-
-        log.debug(prelog() + update.message.text)
-        update.message.text = re.sub(' +', ' ', update.message.text)
-
-        self.yarss_data.subscription_data["regex_include"] = re.sub(REGEX_SUBS_WORD, update.message.text,
-                                                                    self.yarss_data.subscription_data["regex_include"])
-        self.yarss_data.subscription_data["regex_include"] = re.sub(r" ", ".*",
-                                                                    self.yarss_data.subscription_data["regex_include"])
-        log.debug(prelog() + "Adding regex " + self.yarss_data.subscription_data["regex_include"])
-
-        self.yarss_data.subscription_data["label"] = self.label
-        self.yarss_data.subscription_data["name"] = update.message.text
-
-        return self.prepare_categories(update, context)
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "rss_file_name received from %s" % user)
+            
+            log.debug(prelog() + update.message.text)
+            update.message.text = re.sub(' +', ' ', update.message.text)
+    
+            self.yarss_data.subscription_data["regex_include"] = re.sub(REGEX_SUBS_WORD, update.message.text,
+                                                                        self.yarss_data.subscription_data["regex_include"])
+            self.yarss_data.subscription_data["regex_include"] = re.sub(r" ", ".*",
+                                                                        self.yarss_data.subscription_data["regex_include"])
+            log.debug(prelog() + "Adding regex " + self.yarss_data.subscription_data["regex_include"])
+    
+            self.yarss_data.subscription_data["label"] = self.label
+            self.yarss_data.subscription_data["name"] = update.message.text
+    
+            return self.prepare_categories(update, context)
+        return
 
     def rss_apply(self, update: Update, context: CallbackContext):
-        log.debug(prelog() + "entered rss_apply")
-        if str(update.message.chat.id) in self.whitelist:
-            log.debug(prelog() + "in whitelist")
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "rss_apply received from %s" % user)
             try:
                 log.debug(prelog() + "rss_apply opts: {}".format(self.opts))
                 if len(self.opts) > 0:
@@ -796,13 +882,13 @@ class Core(CorePluginBase):
                 return ConversationHandler.END
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
-        else:
-            log.debug(prelog() + "not in whitelist")
+        return
 
     def set_label(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "set_label received from %s" % user)
             try:
-                # user = update.message.chat.id
                 self.label = update.message.text
                 log.debug(prelog() + "Label: %s" % (update.message.text))
 
@@ -820,9 +906,10 @@ class Core(CorePluginBase):
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def torrent_type(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "torrent_type received from %s" % user)
             try:
-                user = update.message.chat.id
                 torrent_type_selected = update.message.text
 
                 if torrent_type_selected == 'Magnet':
@@ -849,7 +936,9 @@ class Core(CorePluginBase):
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def add_magnet(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "add_magnet received from %s" % user)
             try:
                 if self.magnet_only:
                     # Reset bool
@@ -857,137 +946,63 @@ class Core(CorePluginBase):
                     m = re.findall(r'magnet:\?.*\b', update.message.text)
                     if len(m) == 1:
                         metainfo = m[0]
-                        self.opts = {}
                         if is_magnet(metainfo):
-                            log.debug(prelog() + 'Adding torrent from magnet ' +
-                                      'URI `%s` using options `%s` ...',
-                                      metainfo, self.opts)
-                            tid = component.get('Core').add_torrent_magnet(metainfo, self.opts)
-                            return ConversationHandler.END
+                            self.inner_add_magnet(update, context, metainfo)
                     else:
-                        log.error("Magnet not found in message")
-                else:
-                    user = update.message.chat.id
-                    log.debug("addmagnet of %s: %s" % (str(user), update.message.text))
-                    # options = None
-                    metainfo = update.message.text
-                    """Adds a torrent with the given options.
-                    metainfo could either be base64 torrent
-                    data or a magnet link. Available options
-                    are listed in deluge.core.torrent.TorrentOptions.
-                    """
-                    if self.opts is None:
-                        self.opts = {}
-                    if is_magnet(metainfo):
-                        log.debug(prelog() + 'Adding torrent from magnet ' +
-                                  'URI `%s` using options `%s` ...',
-                                  metainfo, self.opts)
-                        tid = component.get('Core').add_torrent_magnet(metainfo, self.opts)
-                        r = self.apply_label(tid)
-                    else:
-                        update.message.reply_text(STRINGS['not_magnet'],
+                        log.error(prelog() + "Magnet not found in message")
+                        update.message.reply_text(STRINGS['no_magnet_found'],
                                                   reply_markup=ReplyKeyboardRemove())
-                return ConversationHandler.END
+                else:
+                    log.debug(prelog() + "addmagnet received from %s: %s" % (user, update.message.text))
+                    metainfo = update.message.text
+                    self.inner_add_magnet(update, context, metainfo)
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
-
-            # except Exception as e:
-            #     log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                
+            return ConversationHandler.END
 
     def find_magnet(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "find_magnet received from %s:" % (user, update.message.text))
             try:
-                log.debug("Find magnets in message")
                 try:
                     # options = None
                     m = re.findall(r'magnet:\?.*\b', update.message.text)
                     if len(m) > 0:
                         mag = m[0]
+                        log.debug(prelog() + "Magnet found in message: " + mag)
                         self.magnet_only = True
                         return self.add_magnet(update, context)
                     else:
-                        log.debug("Magnet not found in message")
+                        log.debug(prelog() + "Magnet not found in message")
                         update.message.reply_text(STRINGS['no_magnet_found'],
                                                   reply_markup=ReplyKeyboardRemove())
-                        return ConversationHandler.END
                 except Exception as e:
                     log.error(prelog() + str(e) + '\n' + traceback.format_exc())
-
-                return ConversationHandler.END
-
+                
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+            
+            return ConversationHandler.END
 
     def add_torrent(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "addtorrent received from %s: %s" % (user, update.message.document))
             try:
-                user = update.message.chat.id
-                log.debug("addtorrent of %s: %s" %
-                          (str(user), update.message.document))
-
-                if update.message.document.mime_type == 'application/x-bittorrent':
-                    # Get file info
-                    file_info = self.bot.getFile(update.message.document.file_id)
-                    # Download file
-                    request = urllib.request.Request(file_info.file_path, headers=HEADERS)
-                    status_code = urllib.request.urlopen(request).getcode()
-                    if status_code == 200:
-                        file_contents = urllib.request.urlopen(request).read()
-                        # Base64 encode file data
-                        metainfo = b64encode(file_contents)
-                        if self.opts is None:
-                            self.opts = {}
-                        log.info(prelog() + 'Adding torrent from base64 string' +
-                                 'using options `%s` ...', self.opts)
-                        tid = component.get('Core').add_torrent_file(None, metainfo, self.opts)
-                        r = self.apply_label(tid)
-                    else:
-                        update.message.reply_text(STRINGS['download_fail'],
-                                                  reply_markup=ReplyKeyboardRemove())
-                else:
-                    update.message.reply_text(STRINGS['not_file'],
-                                              reply_markup=ReplyKeyboardRemove())
-
+                self.inner_add_torrent(update, context, update.message.document)
                 return ConversationHandler.END
-
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
     def add_url(self, update: Update, context: CallbackContext):
-        if str(update.message.chat.id) in self.whitelist:
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.info(prelog() + "addurl received from %s: %s" % (user, update.message.text))
             try:
-                user = update.message.chat.id
-                log.debug("addurl of %s: %s" % (str(user), update.message.text))
-
-                if is_url(update.message.text):
-                    try:
-                        # Download file
-                        request = urllib.request.Request(update.message.text.strip(),
-                                                  headers=HEADERS)
-                        status_code = urllib.request.urlopen(request).getcode()
-                        if status_code == 200:
-                            file_contents = urllib.request.urlopen(request).read()
-                            # Base64 encode file data
-                            metainfo = b64encode(file_contents)
-                            if self.opts is None:
-                                self.opts = {}
-                            log.info(prelog() + 'Adding torrent from base64 string' +
-                                     'using options `%s` ...', self.opts)
-                            tid = component.get('Core').add_torrent_file(None, metainfo, self.opts)
-                            r = self.apply_label(tid)
-                        else:
-                            update.message.reply_text(STRINGS['download_fail'],
-                                                      reply_markup=ReplyKeyboardRemove())
-                    except Exception as e:
-                        update.message.reply_text(STRINGS['download_fail'],
-                                                  reply_markup=ReplyKeyboardRemove())
-                        log.error(prelog() + str(e) + '\n' + traceback.format_exc())
-                else:
-                    update.message.reply_text(STRINGS['not_url'],
-                                              reply_markup=ReplyKeyboardRemove())
-
+                self.inner_add_url(update, context, update.message.text)
                 return ConversationHandler.END
-
             except Exception as e:
                 log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
@@ -1000,6 +1015,103 @@ class Core(CorePluginBase):
         except Exception as e:
             log.error(prelog() + str(e) + '\n' + traceback.format_exc())
 
+    def inner_add_magnet(self, update: Update, context: CallbackContext, metainfo):
+        if self.opts is None:
+            self.opts = {}
+        """Adds a torrent with the given options.
+        metainfo could either be base64 torrent
+        data or a magnet link. Available options
+        are listed in deluge.core.torrent.TorrentOptions.
+        """
+        if is_magnet(metainfo):
+            log.debug(prelog() + 'Adding torrent from magnet ' +
+                      'URI `%s` using options `%s` ...',
+                      metainfo, self.opts)
+            tid = component.get('Core').add_torrent_magnet(metainfo, self.opts)
+            r = self.apply_label(tid)
+        else:
+            update.message.reply_text(STRINGS['not_magnet'],
+                                      reply_markup=ReplyKeyboardRemove())
+
+    def inner_add_url(self, update: Update, context: CallbackContext, messageText):
+        if is_url(messageText):
+            try:
+                # Download file
+                request = urllib.request.Request(messageText.strip(),
+                                          headers=HEADERS)
+                status_code = urllib.request.urlopen(request).getcode()
+                if status_code == 200:
+                    file_contents = urllib.request.urlopen(request).read()
+                    # Base64 encode file data
+                    metainfo = b64encode(file_contents)
+                    if self.opts is None:
+                        self.opts = {}
+                    log.info(prelog() + 'Adding torrent from base64 string' +
+                             'using options `%s` ...', self.opts)
+                    tid = component.get('Core').add_torrent_file(None, metainfo, self.opts)
+                    r = self.apply_label(tid)
+                else:
+                    update.message.reply_text(STRINGS['download_fail'],
+                                              reply_markup=ReplyKeyboardRemove())
+            except Exception as e:
+                update.message.reply_text(STRINGS['download_fail'],
+                                          reply_markup=ReplyKeyboardRemove())
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+        else:
+            update.message.reply_text(STRINGS['not_url'],
+                                      reply_markup=ReplyKeyboardRemove())
+
+    def inner_add_torrent(self, update: Update, context: CallbackContext, document):
+        if document and document.mime_type == 'application/x-bittorrent':
+            # Get file info
+            file_info = self.bot.getFile(document.file_id)
+            # Download file
+            request = urllib.request.Request(file_info.file_path, headers=HEADERS)
+            status_code = urllib.request.urlopen(request).getcode()
+            if status_code == 200:
+                file_contents = urllib.request.urlopen(request).read()
+                # Base64 encode file data
+                metainfo = b64encode(file_contents)
+                if self.opts is None:
+                    self.opts = {}
+                log.info(prelog() + 'Adding torrent from base64 string' +
+                         'using options `%s` ...', self.opts)
+                tid = component.get('Core').add_torrent_file(None, metainfo, self.opts)
+                r = self.apply_label(tid)
+            else:
+                update.message.reply_text(STRINGS['download_fail'],
+                                          reply_markup=ReplyKeyboardRemove())
+        else:
+            update.message.reply_text(STRINGS['not_file'],
+                                      reply_markup=ReplyKeyboardRemove())
+
+    def auto_add_text(self, update: Update, context: CallbackContext):
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            log.debug(prelog() + "auto_add_text received from %s: %s" % (user, update.message.text))
+            try:
+                for metainfo_no_strip in update.message.text.splitlines():
+                    metainfo = metainfo_no_strip.strip()
+                    log.debug(prelog() + 'Processing line %s', metainfo)
+                    if is_magnet(metainfo):
+                        self.inner_add_magnet(update, context, metainfo)
+                    elif is_url(metainfo):
+                        self.inner_add_url(update, context, metainfo)
+                    else:
+                        update.message.reply_text(STRINGS['not_magnet_nor_url'],
+                                                  reply_markup=ReplyKeyboardRemove())
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                
+    def auto_add_torrent(self, update: Update, context: CallbackContext):
+        user = str(update.message.chat.id)
+        if user in self.whitelist:
+            try:
+                log.debug(prelog() + "auto_add_torrent received from %s: %s" % (user, update.message.text))
+                self.inner_add_torrent(update, context, update.message.document)
+            except Exception as e:
+                log.error(prelog() + str(e) + '\n' + traceback.format_exc())
+                
     def apply_label(self, tid):
         try:
             if self.label is not None and self.label != STRINGS['no_label']:

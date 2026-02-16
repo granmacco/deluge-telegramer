@@ -1,5 +1,22 @@
 # Telegramer
 
+## Changelog
+
+* 2.1.1.4.granmacco.1
+    * Rebased to 2.1.1.4 from noam09. Updated to work in deluge 2.2.1.
+    
+* 1.1.6.granmacco.1
+    * Merge from 1.1.6 from noam09. This fixes the 403 forbidden error.
+
+* 1.1.3.granmacco.1
+    * Raised time between updates to three seconds. Maybe this way we can avoid the 403 forbidden error that disconnects the bot
+    * Added new operational handlers. To add a magnet or a file, there is no need for a conversation with the bot. He automatically tries to process them.
+    * Added multiline handling operation to the magnet recogniser. There is no need to send the magnets one at a time.
+    * Added Wake on Lan functionality. Specify a MAC address and a internet interface to send a magic package on Synology systems to perform wake on lan.
+    * Added verbosity. The bot will answer as soon as he parses one of the new orders, independently from other options.
+
+## Original Readme
+
 <p align="center"><a href="https://github.com/noam09/deluge-telegramer" title="Telegramer"><img src="https://i.imgur.com/xXIPX44.png" alt="Telegramer"></a></p>
 
 ![GitHub All Releases](https://img.shields.io/github/downloads/noam09/deluge-telegramer/total?style=flat-square) [![Deluge Version](https://img.shields.io/badge/deluge-1.3.15-blue?style=flat-square&logo=deluge)](https://github.com/noam09/deluge-telegramer/releases/tag/v1.3.1) [![Deluge Version](https://img.shields.io/badge/deluge-2.1.1-yellowgreen?style=flat-square&logo=deluge)](https://github.com/noam09/deluge-telegramer/releases/tag/2.1.1.0)

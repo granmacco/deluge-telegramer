@@ -83,6 +83,9 @@ class GtkUI(GtkPluginBase):
             "telegram_user": self.glade.get_widget("telegram_user").get_text(),
             "telegram_users": self.glade.get_widget("telegram_users").get_text(),
             "telegram_users_notify": self.glade.get_widget("telegram_users_notify").get_text(),
+            # Wake On Lan
+            "wol_address":self.glade.get_widget("wol_address").get_text(),
+            "wol_interface":self.glade.get_widget("wol_interface").get_text(),
             "minimum_speed": self.glade.get_widget("minimum_speed").get_text(),
             "user_timer": self.glade.get_widget("user_timer").get_text(),
             "proxy_url": self.glade.get_widget("proxy_url").get_text(),
@@ -122,6 +125,9 @@ class GtkUI(GtkPluginBase):
         self.glade.get_widget("telegram_user").set_text(config["telegram_user"])
         self.glade.get_widget("telegram_users").set_text(config["telegram_users"])
         self.glade.get_widget("telegram_users_notify").set_text(config["telegram_users_notify"])
+        # Wake On Lan
+        self.glade.get_widget("wol_address").set_text(config["wol_address"])
+        self.glade.get_widget("wol_interface").set_text(config["wol_interface"])
         # Slow
         self.glade.get_widget("minimum_speed").set_text(str(config["minimum_speed"]))
         self.glade.get_widget("user_timer").set_text(str(config["user_timer"]))
